@@ -23,7 +23,7 @@
 ### 📦 How to Run Locally
 1.  Clone the repository:
     ```bash
-    git clone [https://github.com/YOUR_USERNAME/Market-Minds-Forecaster.git](https://github.com/YOUR_USERNAME/Market-Minds-Forecaster.git)
+    git clone [https://github.com/Nielr2004/Market-Minds-Forecaster.git](https://github.com/Nielr2004/Market-Minds-Forecaster.git)
     ```
 2.  Install dependencies:
     ```bash
