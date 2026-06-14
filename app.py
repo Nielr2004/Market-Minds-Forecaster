@@ -270,18 +270,13 @@ else:
     render_market_header(selected_stock, n_years, forecast_days, current_price, delta, pct_change)
     render_indicators(data)
 
+    tab_forecast, tab_backtest, tab_chart = st.tabs(["Forecast", "Backtest", "Market chart"])
 
-    # TAB 3: CANDLESTICK
+    with tab_forecast:
+        render_forecast_tab(data, forecast_days, current_price)
+
+    with tab_backtest:
+        render_backtest_tab(data, forecast_days)
+
     with tab_chart:
-        fig_candle = go.Figure(data=[go.Candlestick(
-            x=data['Date'],
-            open=data['Open'], high=data['High'],
-            low=data['Low'], close=data['Close'],
-            name=selected_stock
-        )])
-        # Add SMAs
-        fig_candle.add_trace(go.Scatter(x=data['Date'], y=data['SMA_50'], name="50 SMA", line=dict(color='orange', width=1)))
-        fig_candle.add_trace(go.Scatter(x=data['Date'], y=data['SMA_200'], name="200 SMA", line=dict(color='purple', width=1)))
-        
-        fig_candle.update_layout(xaxis_rangeslider_visible=False)
-        st.plotly_chart(style_plot(fig_candle), use_container_width=True)
+        render_market_chart_tab(data, selected_stock)
