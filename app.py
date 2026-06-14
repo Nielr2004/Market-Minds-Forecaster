@@ -135,6 +135,127 @@ def add_layout_spacing(height=18):
     st.markdown(f"<div style='height: {height}px'></div>", unsafe_allow_html=True)
 
 
+def render_market_header(ticker, years, horizon, price, delta, pct_change):
+    st.title(ticker)
+    st.markdown("#### Market snapshot")
+
+    with st.container():
+        left, right = st.columns([2.5, 1])
+        with left:
+            st.markdown(
+                f"**Market view for {ticker}**  \n"
+                f"{years} years of historical prices and {horizon}-day forecast horizon."
+            )
+        with right:
+            color_hex = "#00FFA3" if delta > 0 else "#f97316"
+            st.markdown(
+                f"<div style='text-align: right;'>"
+                f"<div style='font-size: 32px; font-weight: 700;'>{format_currency(price)}</div>"
+                f"<div style='color: {color_hex}; font-size: 16px;'>{delta:+.2f} ({pct_change:+.2f}%)</div>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
+    add_layout_spacing(20)
+
+
+def render_indicators(data):
+    with st.container():
+        st.subheader("Key indicators")
+        metric_cols = st.columns(4)
+        metric_cols[0].metric("Highest in period", format_currency(data['High'].max()))
+        metric_cols[1].metric("Lowest in period", format_currency(data['Low'].min()))
+        metric_cols[2].metric("Latest volume", f"{int(data.iloc[-1]['Volume']):,}")
+        metric_cols[3].metric("50-day moving average", format_currency(data.iloc[-1]['SMA_50']))
+
+    add_layout_spacing(18)
+
+
+def render_forecast_tab(data, forecast_days, current_price):
+    st.subheader("Forecast summary")
+    st.write("Forecast applies historical trend and seasonality to estimate future movement.")
+
+    with st.spinner("Preparing forecast..."):
+        df_train = data[['Date', 'Close']].rename(columns={"Date": "ds", "Close": "y"})
+        model = Prophet(changepoint_prior_scale=changepoint_scale, seasonality_mode=seasonality_mode)
+        model.fit(df_train)
+        future = model.make_future_dataframe(periods=forecast_days)
+        forecast = model.predict(future)
+
+        fig_p = plot_plotly(model, forecast)
+        fig_p.data[2].line.color = '#4F8BF9'
+        fig_p.data[0].marker.color = 'rgba(79, 139, 249, 0.15)'
+        fig_p.data[1].marker.color = 'rgba(79, 139, 249, 0.15)'
+        st.plotly_chart(style_plot(fig_p), use_container_width=True)
+
+        pred_price = forecast.iloc[-1]['yhat']
+        trend = "Bullish" if pred_price > current_price else "Bearish"
+
+        result_cols = st.columns([3, 1])
+        result_cols[0].markdown(f"**Forecast target ({forecast_days} days):** {format_currency(pred_price)}")
+        if trend == "Bullish":
+            result_cols[1].success("Trend: Bullish")
+        else:
+            result_cols[1].error("Trend: Bearish")
+
+
+def render_backtest_tab(data, forecast_days):
+    st.subheader("Backtest accuracy")
+    st.write("The model is validated against a held-out historical period.")
+
+    df_train = data[['Date', 'Close']].rename(columns={"Date": "ds", "Close": "y"})
+    train_len = len(df_train) - forecast_days
+
+    if train_len < 30:
+        st.error("Not enough history for a reliable backtest.")
+        return
+
+    train_set = df_train.iloc[:train_len]
+    test_set = df_train.iloc[train_len:]
+    model = Prophet(changepoint_prior_scale=changepoint_scale, seasonality_mode=seasonality_mode)
+    model.fit(train_set)
+    future_bt = model.make_future_dataframe(periods=forecast_days)
+    forecast_bt = model.predict(future_bt)
+
+    combined = pd.merge(test_set, forecast_bt[['ds', 'yhat']], on='ds')
+    combined['AbsError'] = (combined['y'] - combined['yhat']).abs()
+    mae = combined['AbsError'].mean()
+    mape = (combined['AbsError'] / combined['y']).mean() * 100
+
+    summary_cols = st.columns(3)
+    summary_cols[0].metric("Mean absolute error", format_currency(mae))
+    summary_cols[1].metric("MAPE", f"{mape:.2f}%")
+    if mape < 5:
+        summary_cols[2].success("Excellent accuracy")
+    elif mape < 10:
+        summary_cols[2].warning("Good accuracy")
+    else:
+        summary_cols[2].error("Limited accuracy")
+
+    fig_bt = go.Figure()
+    fig_bt.add_trace(go.Scatter(x=train_set['ds'], y=train_set['y'], name="Training data", line=dict(color='#888')))
+    fig_bt.add_trace(go.Scatter(x=test_set['ds'], y=test_set['y'], name="Actual price", line=dict(color='#00FFA3', width=2)))
+    fig_bt.add_trace(go.Scatter(x=forecast_bt['ds'], y=forecast_bt['yhat'], name="Forecast", line=dict(color='#f97316', dash='dot')))
+
+    st.plotly_chart(style_plot(fig_bt), use_container_width=True)
+
+
+def render_market_chart_tab(data, ticker):
+    st.subheader("Market chart")
+    st.write("Candlestick view with moving averages highlights market structure.")
+
+    fig_candle = go.Figure(data=[go.Candlestick(
+        x=data['Date'],
+        open=data['Open'], high=data['High'],
+        low=data['Low'], close=data['Close'],
+        name=ticker
+    )])
+    fig_candle.add_trace(go.Scatter(x=data['Date'], y=data['SMA_50'], name="50 SMA", line=dict(color='orange', width=1)))
+    fig_candle.add_trace(go.Scatter(x=data['Date'], y=data['SMA_200'], name="200 SMA", line=dict(color='purple', width=1)))
+    fig_candle.update_layout(xaxis_rangeslider_visible=False)
+    st.plotly_chart(style_plot(fig_candle), use_container_width=True)
+
+
 # 6. MAIN APP
 data = load_data(selected_stock, n_years)
 
@@ -146,101 +267,9 @@ else:
     delta = current_price - prev_price
     pct_change = (delta / prev_price) * 100
 
-    st.title(selected_stock)
-    st.write("#### Market snapshot")
+    render_market_header(selected_stock, n_years, forecast_days, current_price, delta, pct_change)
+    render_indicators(data)
 
-    with st.container():
-        left, right = st.columns([2.5, 1])
-        with left:
-            st.markdown(
-                f"**Market view for {selected_stock}**  
-                {n_years} years of historical prices and {forecast_days}-day forecast horizon."
-            )
-        with right:
-            st.markdown(
-                f"<div style='text-align: right;'>"
-                f"<div style='font-size: 32px; font-weight: 700;'>{format_currency(current_price)}</div>"
-                f"<div style='color: {'#00FFA3' if delta > 0 else '#f97316'}; font-size: 16px;'>{delta:+.2f} ({pct_change:+.2f}%)</div>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-
-    add_layout_spacing(20)
-
-    with st.container():
-        st.subheader("Key indicators")
-        metrics = st.columns(4)
-        metrics[0].metric("Highest in period", format_currency(data['High'].max()))
-        metrics[1].metric("Lowest in period", format_currency(data['Low'].min()))
-        metrics[2].metric("Latest volume", f"{data.iloc[-1]['Volume']:,}")
-        metrics[3].metric("50-day moving average", format_currency(data.iloc[-1]['SMA_50']))
-
-    add_layout_spacing(18)
-
-    tab_forecast, tab_backtest, tab_chart = st.tabs(["Forecast", "Backtest", "Market chart"])
-
-    # TAB 1: FORECAST
-    with tab_forecast:
-        with st.spinner("Preparing forecast..."):
-            df_train = data[['Date', 'Close']].rename(columns={"Date": "ds", "Close": "y"})
-            m = Prophet(changepoint_prior_scale=changepoint_scale, seasonality_mode=seasonality_mode)
-            m.fit(df_train)
-            future = m.make_future_dataframe(periods=forecast_days)
-            forecast = m.predict(future)
-
-            fig_p = plot_plotly(m, forecast)
-            fig_p.data[2].line.color = '#4F8BF9'
-            fig_p.data[0].marker.color = 'rgba(79, 139, 249, 0.15)'
-            fig_p.data[1].marker.color = 'rgba(79, 139, 249, 0.15)'
-
-            st.plotly_chart(style_plot(fig_p), use_container_width=True)
-
-            pred_price = forecast.iloc[-1]['yhat']
-            trend = "Bullish" if pred_price > current_price else "Bearish"
-            st.markdown(
-                f"**Forecast target ({forecast_days} days):** ${pred_price:,.2f}  "
-                f"**Trend:** {trend}"
-            )
-
-    # TAB 2: BACKTEST
-    with tab_backtest:
-        st.markdown("##### Reality check")
-        st.caption(f"The last {forecast_days} days were held out of training to estimate forecast accuracy.")
-
-        train_len = len(df_train) - forecast_days
-        if train_len < 30:
-            st.error("Not enough data to run backtest. Increase training history.")
-        else:
-            train_set = df_train.iloc[:train_len]
-            test_set = df_train.iloc[train_len:]
-
-            m_bt = Prophet(changepoint_prior_scale=changepoint_scale, seasonality_mode=seasonality_mode)
-            m_bt.fit(train_set)
-            future_bt = m_bt.make_future_dataframe(periods=forecast_days)
-            forecast_bt = m_bt.predict(future_bt)
-
-            combined = pd.merge(test_set, forecast_bt[['ds', 'yhat']], on='ds')
-            combined['AbsError'] = (combined['y'] - combined['yhat']).abs()
-            mae = combined['AbsError'].mean()
-            mape = (combined['AbsError'] / combined['y']).mean() * 100
-
-            col_b1, col_b2, col_b3 = st.columns(3)
-            col_b1.metric("Mean absolute error", f"${mae:,.2f}")
-            col_b2.metric("Mean absolute percentage error", f"{mape:.2f}%")
-
-            if mape < 5:
-                col_b3.success("Excellent accuracy")
-            elif mape < 10:
-                col_b3.warning("Good accuracy")
-            else:
-                col_b3.error("Limited accuracy")
-
-            fig_bt = go.Figure()
-            fig_bt.add_trace(go.Scatter(x=train_set['ds'], y=train_set['y'], name="Training data", line=dict(color='#888')))
-            fig_bt.add_trace(go.Scatter(x=test_set['ds'], y=test_set['y'], name="Actual price", line=dict(color='#00FFA3', width=2)))
-            fig_bt.add_trace(go.Scatter(x=forecast_bt['ds'], y=forecast_bt['yhat'], name="Model forecast", line=dict(color='#f97316', dash='dot')))
-
-            st.plotly_chart(style_plot(fig_bt), use_container_width=True)
 
     # TAB 3: CANDLESTICK
     with tab_chart:
