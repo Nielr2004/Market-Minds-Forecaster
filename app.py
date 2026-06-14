@@ -93,17 +93,18 @@ if st.sidebar.button("Refresh data"):
     st.cache_data.clear()
     st.experimental_rerun()
 
-# 4. CHART HELPER FUNCTION (Makes plots look seamless)
+# 4. CHART HELPER FUNCTION
+
 def style_plot(fig):
     fig.update_layout(
-        paper_bgcolor='rgba(0,0,0,0)',  # Transparent background
+        paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font=dict(color='#cfcfcf'),
         xaxis=dict(showgrid=False, color='#666'),
         yaxis=dict(showgrid=True, gridcolor='#222', color='#666'),
-        margin=dict(l=0, r=0, t=10, b=0), # Remove wasted margins
-        hovermode="x unified",
-        height=550
+        margin=dict(l=0, r=0, t=20, b=0),
+        hovermode='x unified',
+        height=540
     )
     return fig
 
@@ -111,20 +112,28 @@ def style_plot(fig):
 @st.cache_data(ttl=3600)
 def load_data(ticker, years):
     try:
-        start = (date.today() - timedelta(days=years*365)).strftime("%Y-%m-%d")
+        start = (date.today() - timedelta(days=years * 365)).strftime("%Y-%m-%d")
         end = date.today().strftime("%Y-%m-%d")
         data = yf.download(ticker, start=start, end=end)
-        
+
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
-            
+
         data.reset_index(inplace=True)
-        # Add SMA
         data['SMA_50'] = data['Close'].rolling(window=50).mean()
         data['SMA_200'] = data['Close'].rolling(window=200).mean()
         return data
     except Exception:
         return pd.DataFrame()
+
+
+def format_currency(value):
+    return f"${value:,.2f}"
+
+
+def add_layout_spacing(height=18):
+    st.markdown(f"<div style='height: {height}px'></div>", unsafe_allow_html=True)
+
 
 # 6. MAIN APP
 data = load_data(selected_stock, n_years)
@@ -132,48 +141,43 @@ data = load_data(selected_stock, n_years)
 if data.empty:
     st.warning(f"Could not validate ticker '{selected_stock}'. Please try again.")
 else:
-    # --- HEADER SECTION ---
     current_price = data.iloc[-1]['Close']
     prev_price = data.iloc[-2]['Close']
     delta = current_price - prev_price
     pct_change = (delta / prev_price) * 100
 
-    header_col1, header_col2 = st.columns([3, 1])
-    with header_col1:
-        icon_col, title_col = st.columns([0.1, 0.9])
-        with icon_col:
-            st.image(icon_path, width=44)
-        with title_col:
+    st.title(selected_stock)
+    st.write("#### Market snapshot")
+
+    with st.container():
+        left, right = st.columns([2.5, 1])
+        with left:
             st.markdown(
-                f"<div style='margin-bottom: 0.5rem;'>"
-                f"<h1 style='margin: 0; font-size: 2.2rem;'>{selected_stock}</h1>"
-                f"<p style='margin: 0; color: #94a3b8;'>Data-driven market analysis using the last {n_years} years of history.</p>"
+                f"**Market view for {selected_stock}**  
+                {n_years} years of historical prices and {forecast_days}-day forecast horizon."
+            )
+        with right:
+            st.markdown(
+                f"<div style='text-align: right;'>"
+                f"<div style='font-size: 32px; font-weight: 700;'>{format_currency(current_price)}</div>"
+                f"<div style='color: {'#00FFA3' if delta > 0 else '#f97316'}; font-size: 16px;'>{delta:+.2f} ({pct_change:+.2f}%)</div>"
                 f"</div>",
                 unsafe_allow_html=True
             )
-    with header_col2:
-        color_hex = "#00FFA3" if delta > 0 else "#f97316"
-        st.markdown(
-            f"<div style='text-align: right; padding-right: 10px;'>"
-            f"<div style='font-size: 36px; font-weight: bold;'>${current_price:,.2f}</div>"
-            f"<div style='color: {color_hex}; font-size: 18px;'>{delta:+.2f} ({pct_change:+.2f}%)</div>"
-            f"</div>",
-            unsafe_allow_html=True
-        )
 
-    st.markdown("<div style='height: 1rem'></div>", unsafe_allow_html=True)
+    add_layout_spacing(20)
 
-    # --- KPI GRID ---
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("Highest in period", f"${data['High'].max():,.2f}")
-    kpi2.metric("Lowest in period", f"${data['Low'].min():,.2f}")
-    kpi3.metric("Latest volume", f"{data.iloc[-1]['Volume']:,}")
-    kpi4.metric("50-day moving average", f"${data.iloc[-1]['SMA_50']:,.2f}")
+    with st.container():
+        st.subheader("Key indicators")
+        metrics = st.columns(4)
+        metrics[0].metric("Highest in period", format_currency(data['High'].max()))
+        metrics[1].metric("Lowest in period", format_currency(data['Low'].min()))
+        metrics[2].metric("Latest volume", f"{data.iloc[-1]['Volume']:,}")
+        metrics[3].metric("50-day moving average", format_currency(data.iloc[-1]['SMA_50']))
 
-    st.markdown("<div style='height: 1rem'></div>", unsafe_allow_html=True)
+    add_layout_spacing(18)
 
-    # --- TABS ---
-    tab_forecast, tab_backtest, tab_chart = st.tabs(["Forecast", "Backtest", "Candlestick"])
+    tab_forecast, tab_backtest, tab_chart = st.tabs(["Forecast", "Backtest", "Market chart"])
 
     # TAB 1: FORECAST
     with tab_forecast:
